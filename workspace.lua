@@ -1,4 +1,7 @@
-nn_workspace={networks={},loaded={},input={},output={},exeptions={}} -- but i dont mean networking
+graph = {}
+neurograph = {}
+
+nn_workspace={networks={},loaded={},input={},output={},exeptions={},default_input={bias=7}} -- but i dont mean networking
 
 --default_parent
 
@@ -13,16 +16,20 @@ function nn_workspace:load(ai_model,name,is_default)
     
 
     --@enable this if you're using the SNN in roblox and disable the line after it v
-    --nn_workspace.networks[name] = require(game.ReplicatedStorage.ai_models)
-
+    --nn_workspace.networks[name] = require(game.ReplicatedStorage.ai_models[settings.ai_model])
+    
+    --[
     if love.filesystem.exists('workspace_'..ai_model..'.lua') then
         nn_workspace.networks[name]= love.filesystem.load('workspace_'..ai_model..'.lua')()
     else
         nn_workspace.networks[name] = {}
     end
+    --]]
 
     for i,v in pairs(nn_workspace.networks[name]) do -- disgostin i know
         if type(v) == 'table' then
+            --@enable this in ROBLOX v
+            --v.position = Vector2.new(v.position.x,v.position.y)
             v.parent = nn_workspace.networks[name]
             function v:destroy()
                 local object = v
@@ -42,7 +49,7 @@ function nn_workspace:load(ai_model,name,is_default)
     local update= function()
         local printable = {}
         for i,v in pairs(nn_workspace:getchildren(name)) do
-            printable[#printable+1] = {txt=v.name..': '..nn_workspace:get_activation(v),col=settings.colours[v.type]}
+            printable[v] = nn_workspace:get_activation(v)
             -- just do nn_workspace:get_activation(v) if you dont wanna do table/visualisation stuff
         end
         return printable
@@ -50,11 +57,13 @@ function nn_workspace:load(ai_model,name,is_default)
     nn_workspace.loaded[name] = update
     return update
 end
-nn_workspace:load(settings.ai_model,'new civilian',true)
+
+nn_workspace:load(settings.ai_model,settings.ai_model,true)
 
 function love.keypressed(key)
     if key =='=' then
-        nn_workspace:load(settings.ai_model,'new civilian',true)
+		graph={}
+        nn_workspace:load(settings.ai_model,settings.ai_model,true)
     end
 end
 
@@ -84,7 +93,7 @@ else
 	    dopamine=2, -- dopamine is now a strong exhibitory chemical for the bias neuron
 	    substance_p = -2  -- substance p is now a strong inhibitory chemical for the bias neuron
 	}
-end]])
+end]]) -- you'll want to add a space in the double ] or else the thingie wont work in ROBLOX
     neuron_input = {}
     exeption_list = {}
 end
@@ -96,15 +105,26 @@ function love.focus()
 end
 --]]
 
-print(neuron_input,'gang gang')
-
-local function action_potential(x)
-    --local x=x*10 -- converts to ms for inpit
-	return math.sin(1/(x/36+0.31845))^4
+function raw_action(t)
+    t = math.max(0,t)
+    return (math.cos((math.pi*2)/(t+0.8))/(t+1)^2)*1.125
 end
 
-local function hyperpolarisation(x)
-   return action_potential(x*settings.membrane_leak_multiplier+settings.term_time)--*settings.hyperpolarisation_value * settings.membrane_leak_multiplier -- actually simple, just looks complex because of fancy words
+function action_potential(t)
+    t=t/100
+    if t < 3.2 then
+        return raw_action(t+0.016)*43
+    else
+        return 0,true
+    end
+end
+function propegated_action_potential(t)
+    t=t/100
+    if t < 0.5555555 then
+        return raw_action(t)*43
+    else
+        return 0,true
+    end
 end
 -- make it use low-pass filter for activation? nvm thats dumb
 
@@ -140,6 +160,11 @@ types = {
 	soft_mem_neuron={"connections","synthesis","input","threshold"},
 }
 
+function nn_workspace:destroy(name)
+    nn_workspace.loaded[name]=nil
+    
+end
+
 function nn_workspace:new_connection(from,to,v)
 	from.connections[to] = v
 end
@@ -148,86 +173,119 @@ function nn_workspace:get_activation(neuron) --
     if neuron.type ~= 'input_neuron' then
         local bassline_value = 0
 
-        if neuron.locked and (neuron.locked =='perm' or (neuron.locked+settings.lock_time) > gametime) then
+        if neuron.locked and (neuron.locked =='perm' or (neuron.lock_chance or neuron.locked+settings.lock_time) > gametime) then
+            print(neuron.locked)
             bassline_value = neuron.threshold
         else
-            neuron.locked = nil
+            if neuron.locked then
+                neuron.locked = nil
+                neuron.input = {{time=gametime-20,amount=neuron.threshold,linear=true,transmitter='action_p'},{time=gametime,amount=-neuron.threshold,linear=true,transmitter='action_p'}}
+            end
             local bassline_transmitters = {}
             neuron.input = neuron.input or {}
-            for index,data in  pairs(neuron.input) do -- gets activation value for each neurotransmitter
-                local offset_time = gametime-data.time
-                if data.transmitter == 'fire' then
-                    local activation = hyperpolarisation(offset_time)
-                    if  math.abs(activation) < settings.critical_activation then
-                        neuron.input[index] = nil 
-                    else
-                        bassline_transmitters[data.transmitter] = (bassline_transmitters[data.transmitter] or 0) + activation
-                    end
+
+            local channels_closed
+
+            if neuron.input.fire then
+                local value,term = action_potential(gametime-neuron.input.fire)
+                bassline_value = value
+                if value >= 0 then
+                    channels_closed = true
                 else
-                    local activation = action_potential(offset_time) * data.amount
-                    if offset_time > settings.term_time and math.abs(activation) < settings.critical_activation then
-                        neuron.input[index] = nil 
-                    else
-                        bassline_transmitters[data.transmitter] = (bassline_transmitters[data.transmitter] or 0) + activation
-                    end
+                    setmetatable(neuron.input,{})
+                end
+                if term then
+                    neuron.input.fire = nil
                 end
             end
 
-            local new_combinations = true
-            while new_combinations do -- combines neurotransmitters, while loop to handle multi layered combinations
-                new_combinations = false
-                for _,list in pairs(settings.neurotransmitter_combination) do
-                    local combined_value = ''
-                    local minima = math.huge
-                    local existant = true
+            if not channels_closed then
+                for index,data in  pairs(neuron.input) do -- gets activation value for each neurotransmitter
+                    if type(data) ~= 'number' then
+                        local offset_time = gametime-data.time
+                        local activation,term
 
-                    for _,neurotransmitter in pairs(list) do
-                        if  bassline_transmitters[neurotransmitter] then
-                            minima = math.min(minima,bassline_transmitters[neurotransmitter])
-                            local connective = ((combined_value~='') and '_') or '' -- serialises the new neurotransmitter mixture name 
-                            combined_value = combined_value..connective..neurotransmitter -- e.g. epinephrine_dopamine
-                        else 
-                            existant = false
+                        if not data.linear then
+                            activation,term = propegated_action_potential(offset_time)
+                        else
+                            activation= data.activation
+                        end
+
+
+                        if term then
+                            neuron.input[index] = nil 
+                        else
+                            bassline_transmitters[data.transmitter] =  (bassline_transmitters[data.transmitter] or 0) + activation * data.amount
                         end
                     end
+                end
 
-                    if existant then -- able to make combination
-                        new_combination = true
+                local new_combinations = true
+                while new_combinations do -- combines neurotransmitters, while loop to handle multi layered combinations
+                    new_combinations = false
+                    
+                    for _,list in pairs(neuron.neurotransmitter_combination or settings.neurotransmitter_combination) do
+                        local combined_value = ''
+                        local minima = math.huge
+                        local existant = true
+                        local negative_minima = false
+
                         for _,neurotransmitter in pairs(list) do
-                            local value = bassline_transmitters[neurotransmitter]-minima
-                            if approx_equal(bassline_transmitters[neurotransmitter],0) then -- ik 
-                                bassline_transmitters[neurotransmitter] = nil -- all used up, no point in keeping track of it
-                            else
-                                bassline_transmitters[neurotransmitter] =  bassline_transmitters[neurotransmitter]-minima
+                            if  bassline_transmitters[neurotransmitter] then
+                                minima = math.min(minima,math.abs(bassline_transmitters[neurotransmitter]))
+                                if math.abs(bassline_transmitters[neurotransmitter]) == minima then
+                                    negative_minima = minima == (bassline_transmitters[neurotransmitter])
+                                end
+                                local connective = ((combined_value~='') and '_') or '' -- serialises the new neurotransmitter mixture name 
+                                combined_value = combined_value..connective..neurotransmitter -- e.g. epinephrine_dopamine
+                            else 
+                                existant = false
                             end
                         end
-                        bassline_transmitters[combined_value] = minima
+                        if negative_minima then
+                            minima = -minima
+                        end
+
+
+                        --if minima > 0 then
+                            if existant then -- able to make combination
+                                new_combination = true
+                                for _,neurotransmitter in pairs(list) do
+                                    if approx_equal(bassline_transmitters[neurotransmitter],0) then -- ik 
+                                        bassline_transmitters[neurotransmitter] = nil -- all used up, no point in keeping track of it
+                                    else
+                                        bassline_transmitters[neurotransmitter] = bassline_transmitters[neurotransmitter]-minima
+                                    end
+                                end
+                                bassline_transmitters[combined_value] = minima
+                            end
+                        --end
+
+
                     end
                 end
-            end
-
-        
-             -- bassline_transmitters have been converted into genuine transmitters value
-            for neurotransmitter,value in pairs(bassline_transmitters) do
-                local exeptions = nn_workspace.exeptions[neuron.parent.name][neuron.name]
-                local exeption_multiplier
-                if exeptions then
-                    exeption_multiplier = (exeptions[neurotransmitter] or 1) * settings.neurotransmitter_membrane_offset[neurotransmitter]
+                 -- bassline_transmitters have been converted into genuine transmitters value
+                for neurotransmitter,value in pairs(bassline_transmitters) do
+                    local exeptions = nn_workspace.exeptions[neuron.parent.name][neuron.name]
+                    local exeption_multiplier
+                    if exeptions then
+                        exeption_multiplier = (exeptions[neurotransmitter])-- * settings.neurotransmitter_membrane_offset[neurotransmitter]
+                    end
+                    exeption_multiplier = exeption_multiplier or settings.neurotransmitter_membrane_offset[neurotransmitter]
+                    bassline_value = bassline_value + (exeption_multiplier * value) -- add exeptions
                 end
-                exeption_multiplier = exeption_multiplier or settings.neurotransmitter_membrane_offset[neurotransmitter]
-                bassline_value = bassline_value + exeption_multiplier * value -- add exeptions
+                neuron.transmitter=bassline_transmitters
             end
         end
 
-        --neuron fired
 
         neuron.threshold = neuron.threshold or 6
 
-        if bassline_value >= neuron.threshold then
-            bassline_value = bassline_value - settings.hyperpolarisation_value
+        if bassline_value >= neuron.threshold and (not neuron.input.fire or (action_potential(gametime-neuron.input.fire) < 0) ) then
+            --bassline_value = bassline_value - settings.hyperpolarisation_value
             if neuron.type == 'soft_mem_neuron' then
                 if not neuron.locked then -- prevents feedback loop
-                    if math.random() > settings.perm_lock_chance then
+                    if math.random() > (neuron.perm_lock_chance or settings.perm_lock_chance) then
                         neuron.locked = gametime
                     else
                         neuron.locked = 'perm'
@@ -235,34 +293,72 @@ function nn_workspace:get_activation(neuron) --
                 end
 
                 for reference_neuron,weight in pairs(neuron.connections) do
-                    reference_neuron.input = reference_neuron.input or {} -- input seems to randomly dissapear, this is quick fix
-                    reference_neuron.input[neuron.name] = {transmitter=neuron.synthesis,amount=(weight * bassline_value),time=gametime - settings.term_time}
+                    reference_neuron.input = reference_neuron.input or {}
+                    if not reference_neuron.input[neuron.name] then
+                    --reference_neuron.input = reference_neuron.input or {} -- input seems to randomly dissapear, this is quick fix
+                        reference_neuron.input[neuron.name] = {transmitter=neuron.synthesis,time=gametime,linear=true}
+                    end
+					if reference_neuron.input[neuron.name] then
+						reference_neuron.input[neuron.name].amount=weight*bassline_value
+					end
                 end
             else
                 neuron.input = neuron.input or {}
+
                 for reference_neuron,weight in pairs(neuron.connections) do
                     reference_neuron.input = reference_neuron.input or {}
-                    if reference_neuron.type ~= 'output_neuron' then
-                        reference_neuron.input[#reference_neuron.input+1] = {transmitter=neuron.synthesis,amount=(weight * bassline_value),time=gametime} -- :O
-                    else
-                         reference_neuron.input[reference_neuron.name] = {transmitter=neuron.synthesis,amount=(weight * bassline_value),time=gametime}
-                    end
+                    --error(weight)
+                    reference_neuron.input[reference_neuron.name] = {transmitter=neuron.synthesis,amount=weight,time=gametime} 
                 end
-                for i,_ in pairs(neuron.input) do
-                    neuron.input[i] = nil
-                end
-                 neuron.input[1] = {transmitter='fire',time=gametime}
+				
+                neuron.input ={fire = gametime}
+                --neuron.transmitter={}
+               setmetatable(neuron.input,
+                    {
+                        __newindex = function()
+                        end
+                    }
+                )
             end
+		elseif bassline_value < neuron.threshold and neuron.type == 'soft_mem_neuron' then
+			for reference_neuron,weight in pairs(neuron.connections) do
+				reference_neuron.input[neuron.name] = nil --{amount=-neuron.threshold,time=gametime,transmitter=neuron.synthesis,linear=true}
+			end
         end
         return bassline_value
-    else --
+    else
+
+        neuron.input.output = neuron.input.output or 0
+
+		local input_val=nn_workspace.input[neuron.name]
+		neuron.name = tostring(neuron.name)
+		local first_space = neuron.name:find(' ') or #neuron.name+1
+		local class = neuron.name:sub(1,first_space-1)
+
+		if not input_val and nn_workspace.default_input[class] then
+			input_val = nn_workspace.default_input[class]
+        elseif not input_val and nn_workspace.default_input[neuron.name] then -- could wrap in 1 if for input_val but im laaaazy
+            input_val = nn_workspace.default_input[neuron.name]
+		end
+		if type(input_val) == 'function' then -- dynamic inputs
+			input_val = input_val(neuron.name:sub(first_space,#neuron.name)) --
+		end
+		-- e.g. if input neuron is called "seen gunshot" it would call nn_workspace.default_input.seen("gunshot") if there is func there and no specific params
+		input_val = input_val or 0 -- in case all else fails lol
+		
+
         for reference_neuron,weight in pairs(neuron.connections) do
-            reference_neuron.input = reference_neuron.input or {}
-            reference_neuron.input[neuron.name] = 
-                {transmitter=neuron.synthesis,amount= (nn_workspace.input[neuron.parent.name][neuron.name] or 0) * weight, time=gametime - settings.term_time}
+            reference_neuron.input[neuron.name] = reference_neuron.input[neuron.name] or {transmitter=neuron.synthesis,linear=true, time=gametime,amount=weight}
+            if reference_neuron.input[neuron.name] then
+                reference_neuron.input[neuron.name].output = reference_neuron.input[neuron.name].output or 0
+                local multiplier=math.max(-0.1,math.min(reference_neuron.input[neuron.name].output-input_val,0.1))
+                reference_neuron.input[neuron.name].output =reference_neuron.input[neuron.name].output-multiplier
+                reference_neuron.input[neuron.name].activation=reference_neuron.input[neuron.name].output
+            end
+        --   rawset(reference_neuron.input[neuron.name],'activation',neuron.input.output)
         end
     
-        return nn_workspace.input[neuron.parent.name][neuron.name] or 0
+        return input_val or 0
     end
 end
 

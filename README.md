@@ -1,6 +1,8 @@
-# SNN-Builder
-This is the SNN terminal. You can use this to actually use the AI in any other platform which uses Lua, however is built to be ported into ROBLOX or used in LOVE2D. To port to ROBLOX, all you need to do is combine the scripts in order; for details of the order and what to change, use ctrl f9 @enable to find the comments mentioning what to do. You can also use the terminal to simply run the SNN in LOVE2D to have more detailed neuron state data. The terminal uses the same save file as the builder, so if you want to test any AI you built you can simply run the terminal with same edit settings to test it. Genetic algorithims may be implemented in the future.
+# SNN-Terminal
+This is the AI terminal which is used to simulate neural networks created by the SNN Builder. There are no training algorithms included, as this was mostly designed to be used as a nuanced flowchart system with neurotransmitters, however I have created a genetic algorithm for the terminal before but I have not included it here as it was very shabby and only a proof of concept. The networks you create in the SNN Builder will be opened by the terminal as long as you have the same ai_model name in settings.
+
+To test out different inputs/add exeptions to specific neurons behavior, you can access the "data" file in your LOVE2D savefile folder, inside the snn folder.
 
 ![ScreenShot](https://raw.githubusercontent.com/WaffloidRBX/SNN-Terminal/master/example.png)
 
-This is how the terminal looks. You can edit the data.lua file within the savefile, to change the exeption list and the inputs, or you can integrate dynamic inputs for the SNN.
+This is an example of a running SNN in the SNN Terminal.
